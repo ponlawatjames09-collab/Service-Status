@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BarChart3,
   Moon,
   RefreshCw,
   Search,
@@ -17,12 +18,14 @@ import {
   ParsedSheetResult,
   RepairRecord,
 } from './types/repair';
-import { SummaryStrip } from './components/SummaryStrip';
 import { OrStatusBoard } from './components/OrStatusBoard';
 import { RecordDetailDrawer } from './components/RecordDetailDrawer';
+import { SummaryModal } from './components/SummaryModal';
 
 type ModalityFilter = 'all' | 'imaging_only' | EquipmentModality;
-type StatusFilter = 'all' | NormalizedStatus;
+type StatusFilter = 'active' | 'all' | NormalizedStatus;
+
+const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 export function App() {
   const [backendMeta, setBackendMeta] = useState<Omit<BackendSheetResponse, 'rows'> | null>(null);
@@ -33,17 +36,16 @@ export function App() {
 
   // OR Monitor Controls
   const [now, setNow] = useState<Date>(() => new Date());
-  const [autoRefreshSec, setAutoRefreshSec] = useState<number>(30);
-  const [blinkEnabled, setBlinkEnabled] = useState<boolean>(true);
   const [isDark, setIsDark] = useState<boolean>(true);
 
-  // Filters
+  // Filters (default hides Closed status on main board)
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [modalityFilter, setModalityFilter] = useState<ModalityFilter>('all');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
 
-  // Inspection Drawer
+  // Modals / Drawers
   const [selectedRecord, setSelectedRecord] = useState<RepairRecord | null>(null);
+  const [isSummaryOpen, setIsSummaryOpen] = useState<boolean>(false);
 
   const isFetchingRef = useRef(false);
 
@@ -104,17 +106,25 @@ export function App() {
     void loadRepairBoard();
   }, [loadRepairBoard]);
 
-  // Real-time auto-refresh polling
+  // Embedded 5-minute automatic refresh
   useEffect(() => {
-    if (autoRefreshSec <= 0) return;
     if (backendMeta && !backendMeta.configured) return;
     const interval = window.setInterval(() => {
       void loadRepairBoard();
-    }, autoRefreshSec * 1000);
+    }, AUTO_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(interval);
-  }, [autoRefreshSec, backendMeta, loadRepairBoard]);
+  }, [backendMeta, loadRepairBoard]);
 
   const allRecords = parsedData?.records || [];
+
+  const isClosedRecord = (rec: RepairRecord) =>
+    rec.normalizedStatus === 'completed' ||
+    rec.statusRaw.trim().toLowerCase() === 'closed';
+
+  const openRecordsCount = useMemo(
+    () => allRecords.filter((r) => !isClosedRecord(r)).length,
+    [allRecords]
+  );
 
   const hasOtherEquipment = useMemo(
     () => allRecords.some((r) => r.modality === 'other'),
@@ -132,7 +142,11 @@ export function App() {
         return false;
       }
 
-      if (statusFilter !== 'all' && rec.normalizedStatus !== statusFilter) {
+      if (statusFilter === 'active') {
+        if (isClosedRecord(rec)) {
+          return false;
+        }
+      } else if (statusFilter !== 'all' && rec.normalizedStatus !== statusFilter) {
         return false;
       }
 
@@ -159,12 +173,12 @@ export function App() {
   const hasActiveFilters =
     searchQuery.trim() !== '' ||
     modalityFilter !== 'all' ||
-    statusFilter !== 'all';
+    statusFilter !== 'active';
 
   const resetFilters = () => {
     setSearchQuery('');
     setModalityFilter('all');
-    setStatusFilter('all');
+    setStatusFilter('active');
   };
 
   const formattedClock = now.toLocaleTimeString('th-TH', {
@@ -187,14 +201,25 @@ export function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-[#080D16] dark:text-slate-100">
-      {/* Clean Top Bar without OR Status Board / Google Sheet Source nav items */}
+      {/* Top Bar */}
       <header className="sticky top-0 z-30 border-b border-slate-200 dark:border-slate-800/90 bg-white/95 dark:bg-[#0B111E]/95 backdrop-blur-sm">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
           <span className="font-display text-base sm:text-lg font-bold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0">
             Innovative Imaging Systems
           </span>
 
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {!isUnconfigured && (
+              <button
+                type="button"
+                onClick={() => setIsSummaryOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] text-xs sm:text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+              >
+                <BarChart3 className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+                <span>สรุปงานซ่อม</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => setIsDark((prev) => !prev)}
@@ -218,12 +243,12 @@ export function App() {
               type="button"
               onClick={() => void loadRepairBoard()}
               disabled={isLoadingData}
-              className="inline-flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-slate-900 text-white dark:bg-sky-500 dark:text-slate-950 hover:opacity-90 transition-opacity whitespace-nowrap shrink-0 disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-3.5 sm:px-4 py-2 min-h-[40px] text-xs sm:text-sm font-semibold rounded-lg bg-slate-900 text-white dark:bg-sky-500 dark:text-slate-950 hover:opacity-90 transition-opacity whitespace-nowrap shrink-0 disabled:opacity-50"
             >
               <RefreshCw
                 className={`w-4 h-4 ${isLoadingData ? 'animate-spin' : ''}`}
               />
-              <span>อัปเดตทันที</span>
+              <span className="hidden sm:inline">อัปเดตทันที</span>
             </button>
           </div>
         </div>
@@ -240,6 +265,8 @@ export function App() {
               <span>
                 {activeTitle} / {activeTab}
               </span>
+              <span aria-hidden="true">·</span>
+              <span>อัปเดตอัตโนมัติทุก 5 นาที</span>
               {lastSyncedAt && (
                 <>
                   <span aria-hidden="true">·</span>
@@ -330,13 +357,10 @@ export function App() {
               </div>
             )}
 
-            {/* 5-Column Summary Telemetry Strip */}
-            <SummaryStrip records={filteredRecords} isLoading={isLoadingData} />
-
-            {/* Workspace Toolbar: Filters, Search, Auto-Refresh, Blink Control */}
+            {/* Workspace Toolbar: Filters & Search (5-min refresh & blinking status embedded) */}
             <section
-              aria-label="ตัวกรองและการควบคุมกระดานสถานะ"
-              className="flex flex-col xl:flex-row xl:items-center justify-between gap-4"
+              aria-label="ตัวกรองและการค้นหารายการซ่อม"
+              className="flex flex-col lg:flex-row lg:items-center justify-between gap-4"
             >
               <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-wrap">
                 {/* Equipment Modality Segmented Control */}
@@ -354,7 +378,7 @@ export function App() {
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
-                    ทั้งหมด ({allRecords.length})
+                    ทั้งหมด ({statusFilter === 'active' ? openRecordsCount : allRecords.length})
                   </button>
                   <button
                     type="button"
@@ -393,7 +417,7 @@ export function App() {
                   )}
                 </div>
 
-                {/* Status Filter Dropdown */}
+                {/* Status Filter Dropdown (defaults to hiding Closed) */}
                 <select
                   aria-label="กรองตามสถานะงานซ่อม"
                   value={statusFilter}
@@ -402,72 +426,45 @@ export function App() {
                   }
                   className="px-3 py-2 text-xs sm:text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0E1523] text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-500"
                 >
-                  <option value="all">ทุกสถานะงานซ่อม</option>
+                  <option value="active">งานค้างดำเนินการ (ซ่อน Closed)</option>
+                  <option value="all">ทุกสถานะ (รวม Closed)</option>
                   <option value="new_urgent">แจ้งซ่อมใหม่ / ด่วน</option>
                   <option value="in_progress">กำลังดำเนินการ</option>
-                  <option value="waiting_parts">รออะไหล่ / รอตรวจ</option>
-                  <option value="completed">เสร็จสิ้นแล้ว</option>
+                  <option value="waiting_parts">รออะไหล่ / เสนอราคา</option>
+                  <option value="completed">เสร็จสิ้นแล้ว (Closed)</option>
                   <option value="cancelled">ยกเลิก</option>
                 </select>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3">
-                {/* Search Input */}
-                <div className="relative flex-1 sm:flex-initial sm:w-64">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <input
-                    type="search"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="ค้นหาโรงพยาบาล, เครื่อง, อาการ..."
-                    className="w-full pl-9 pr-8 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0E1523] text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500"
-                  />
-                  {searchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setSearchQuery('')}
-                      aria-label="ล้างคำค้นหา"
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-
-                {/* Blinking Text Toggle */}
-                <button
-                  type="button"
-                  onClick={() => setBlinkEnabled((prev) => !prev)}
-                  className={`px-3 py-2 text-xs sm:text-sm font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
-                    blinkEnabled
-                      ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0E1523] text-slate-600 dark:text-slate-400'
-                  }`}
-                >
-                  {blinkEnabled ? 'กระพริบสถานะ: เปิด' : 'กระพริบสถานะ: ปิด'}
-                </button>
-
-                {/* Auto Refresh Cadence */}
-                <select
-                  aria-label="ความถี่ในการอัปเดตอัตโนมัติ"
-                  value={autoRefreshSec}
-                  onChange={(e) => setAutoRefreshSec(Number(e.target.value))}
-                  className="px-3 py-2 text-xs sm:text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0E1523] text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-500"
-                >
-                  <option value={15}>รีเฟรชอัตโนมัติ 15 วิ</option>
-                  <option value={30}>รีเฟรชอัตโนมัติ 30 วิ</option>
-                  <option value={60}>รีเฟรชอัตโนมัติ 60 วิ</option>
-                  <option value={0}>รีเฟรชด้วยตนเอง</option>
-                </select>
+              {/* Search Input */}
+              <div className="relative w-full lg:w-72">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="ค้นหาโรงพยาบาล, เครื่อง, อาการ..."
+                  className="w-full pl-9 pr-8 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0E1523] text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    aria-label="ล้างคำค้นหา"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </section>
 
-            {/* Operating Room Status Board */}
+            {/* Operating Room Status Board (blinking embedded as true) */}
             <section id="status-board" aria-label="ตารางสถานะงานซ่อมโรงพยาบาล">
               <OrStatusBoard
                 records={filteredRecords}
                 isLoading={isLoadingData}
-                blinkEnabled={blinkEnabled}
+                blinkEnabled={true}
                 hasActiveFilters={hasActiveFilters}
                 onResetFilters={resetFilters}
                 onSelectRecord={setSelectedRecord}
@@ -488,10 +485,18 @@ export function App() {
         </div>
       </footer>
 
+      {/* Repair Summary Dialog */}
+      <SummaryModal
+        isOpen={isSummaryOpen}
+        onClose={() => setIsSummaryOpen(false)}
+        records={allRecords}
+        isLoading={isLoadingData}
+      />
+
       {/* Inspection Slide-Over Drawer */}
       <RecordDetailDrawer
         record={selectedRecord}
-        blinkEnabled={blinkEnabled}
+        blinkEnabled={true}
         onClose={() => setSelectedRecord(null)}
       />
     </div>

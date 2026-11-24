@@ -1,6 +1,8 @@
 {
-  "name": "Innovative Imaging Systems — OR Repair Status Board",
+  "name": "Innovative Imaging Systems — Repair Status Board",
   "description": "Real-time Fluoroscopy & Ultrasound service repair dashboard styled after an operating room status board, connected to Google Sheets PM All (CM Record).",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
